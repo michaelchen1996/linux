@@ -4501,6 +4501,7 @@ static int md_domain_init(struct dmar_domain *domain, int guest_width)
 	domain->max_addr = 0;
 
 	/* always allocate the top pgd */
+	printk("alloc MMU here!!!\n");
 	domain->pgd = alloc_pgtable_page(domain->nid);
 	if (!domain->pgd)
 		return -ENOMEM;
