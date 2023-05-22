@@ -50,8 +50,7 @@ static void handle_demo_kick(struct vhost_work *work)
 	struct vhost_demo *demo = container_of(vq->dev, struct vhost_demo, dev);
 	int head;
 	unsigned in, out;
-	size_t out_len, in_len, total_len = 0, nbytes;
-	int ret = ~0;
+	size_t out_len, in_len, total_len = 0;
 	struct iov_iter iov_iter;
 
 	printk("vhost_demo: handle_demo_kick() begin\n");
@@ -59,48 +58,54 @@ static void handle_demo_kick(struct vhost_work *work)
 	vhost_disable_notify(&demo->dev, vq);
 	printk("vhost_demo: handle_demo_kick() mutex_lock and vhost_disable_notify\n");
 
-
 	for (;;) {
-		printk("vhost_demo: handle_demo_kick() into for(;;)\n");
+
 		head = vhost_get_vq_desc(vq, vq->iov,
 				      ARRAY_SIZE(vq->iov), 
 					  &out, &in, 
 					  NULL, NULL);
-		if (unlikely(head < 0))
+		if (unlikely(head < 0)) {
+			printk("vhost_demo: handle_demo_kick() for(;;) break1\n");
 			break;
+		}
 		/* Nothing new?  Wait for eventfd to tell us they refilled. */
 		if (head == vq->num) {
 			if (unlikely(vhost_enable_notify(&demo->dev, vq))) {
 				vhost_disable_notify(&demo->dev, vq);
 				continue;
 			}
+			printk("vhost_demo: handle_demo_kick() for(;;) break2\n");
 			break;
 		}
 		printk("vhost_demo: handle_demo_kick(), out=%u in=%u\n", out, in);
 
 		out_len = iov_length(vq->iov, out);
 		in_len = iov_length(&vq->iov[out], in);
-		printk("vhost_demo: handle_demo_kick(), out_len=%u in_len=%u\n", 
+		printk("vhost_demo: handle_demo_kick(), out_len=%lu in_len=%lu\n", 
 			out_len, in_len);
 
 		iov_iter_init(&iov_iter, WRITE, vq->iov, out, out_len);
-		nbytes = copy_from_iter(&demo->v1, 8, &iov_iter);
-		printk("vhost_demo: handle_demo_kick(), out, nbytes=%u\n", nbytes);
+		copy_from_iter(&demo->v1, 8, &iov_iter);
+
+		demo->v3 = demo->v1;
+		if (1 == demo->v1) {
+			demo->v4 = demo->v2;
+		}
 
 		iov_iter_init(&iov_iter, READ, &vq->iov[out], in, in_len);
-		nbytes = copy_to_iter(&demo->v3, 8, &iov_iter);
-		printk("vhost_demo: handle_demo_kick(), out, nbytes=%u\n", nbytes);
+		copy_to_iter(&demo->v3, 8, &iov_iter);
 
 		printk("vhost_demo: handle_demo_kick(), handle finish, v1-v4 = %u %u %u %u\n", 
 			demo->v1, demo->v2, demo->v3, demo->v4);
 
 		vhost_add_used_and_signal(&demo->dev, vq, head, 0);
 		total_len += (out_len + in_len);
-		if (unlikely(vhost_exceeds_weight(vq, 0, total_len)))
+		if (unlikely(vhost_exceeds_weight(vq, 0, total_len))) {
 			break;
+		}
 	}
-
 	mutex_unlock(&vq->mutex);
+	vhost_poll_queue(&vq->poll);
 	printk("vhost_demo: handle_demo_kick() end\n");
 	
 }
@@ -148,6 +153,7 @@ static void *vhost_demo_stop_vq(struct vhost_demo *d,
 
 static void vhost_demo_stop(struct vhost_demo *d, void **privatep)
 {
+	printk("vhost_demo_stop() begin\n");
 	*privatep = vhost_demo_stop_vq(d, &d->vq);
 }
 
@@ -158,6 +164,7 @@ static void vhost_demo_flush_vq(struct vhost_demo *d, int index)
 
 static void vhost_demo_flush(struct vhost_demo *d)
 {
+	printk("vhost_demo_flush() begin\n");
 	vhost_demo_flush_vq(d, 0);
 }
 
@@ -165,6 +172,8 @@ static int vhost_demo_release(struct inode *inode, struct file *f)
 {
 	struct vhost_demo *d = f->private_data;
 	void  *private;
+
+	printk("vhost_demo_release() begin\n");
 
 	vhost_demo_stop(d, &private);
 	vhost_demo_flush(d);
@@ -352,6 +361,8 @@ static long vhost_demo_reset_owner(struct vhost_demo *d)
 	long err;
 	struct vhost_iotlb *umem;
 
+	printk("vhost_demo_reset_owner() begin\n");
+
 	mutex_lock(&d->dev.mutex);
 	err = vhost_dev_check_owner(&d->dev);
 	if (err)
@@ -373,52 +384,33 @@ done:
 	return err;
 }
 
-// static int vhost_net_set_features(struct vhost_net *n, u64 features)
-// {
-// 	size_t vhost_hlen, sock_hlen, hdr_len;
-// 	int i;
+static int vhost_demo_set_features(struct vhost_demo *d, u64 features)
+{
+	mutex_lock(&d->dev.mutex);
+	if ((features & (1 << VHOST_F_LOG_ALL)) &&
+	    !vhost_log_access_ok(&d->dev))
+		goto out_unlock;
 
-// 	hdr_len = (features & ((1ULL << VIRTIO_NET_F_MRG_RXBUF) |
-// 			       (1ULL << VIRTIO_F_VERSION_1))) ?
-// 			sizeof(struct virtio_net_hdr_mrg_rxbuf) :
-// 			sizeof(struct virtio_net_hdr);
-// 	if (features & (1 << VHOST_NET_F_VIRTIO_NET_HDR)) {
-// 		/* vhost provides vnet_hdr */
-// 		vhost_hlen = hdr_len;
-// 		sock_hlen = 0;
-// 	} else {
-// 		/* socket provides vnet_hdr */
-// 		vhost_hlen = 0;
-// 		sock_hlen = hdr_len;
-// 	}
-// 	mutex_lock(&n->dev.mutex);
-// 	if ((features & (1 << VHOST_F_LOG_ALL)) &&
-// 	    !vhost_log_access_ok(&n->dev))
-// 		goto out_unlock;
+	if ((features & (1ULL << VIRTIO_F_ACCESS_PLATFORM))) {
+		if (vhost_init_device_iotlb(&d->dev, true))
+			goto out_unlock;
+	}
+	mutex_lock(&d->vq.mutex);
+	d->vq.acked_features = features;
+	mutex_unlock(&d->vq.mutex);
+	mutex_unlock(&d->dev.mutex);
+	return 0;
 
-// 	if ((features & (1ULL << VIRTIO_F_ACCESS_PLATFORM))) {
-// 		if (vhost_init_device_iotlb(&n->dev, true))
-// 			goto out_unlock;
-// 	}
-
-// 	for (i = 0; i < VHOST_NET_VQ_MAX; ++i) {
-// 		mutex_lock(&n->vqs[i].vq.mutex);
-// 		n->vqs[i].vq.acked_features = features;
-// 		n->vqs[i].vhost_hlen = vhost_hlen;
-// 		n->vqs[i].sock_hlen = sock_hlen;
-// 		mutex_unlock(&n->vqs[i].vq.mutex);
-// 	}
-// 	mutex_unlock(&n->dev.mutex);
-// 	return 0;
-
-// out_unlock:
-// 	mutex_unlock(&n->dev.mutex);
-// 	return -EFAULT;
-// }
+out_unlock:
+	mutex_unlock(&d->dev.mutex);
+	return -EFAULT;
+}
 
 static long vhost_demo_set_owner(struct vhost_demo *d)
 {
 	int r;
+
+	printk("vhost_demo_set_owner() begin\n");
 
 	mutex_lock(&d->dev.mutex);
 	if (vhost_dev_has_owner(&d->dev)) {
@@ -443,9 +435,11 @@ static long vhost_demo_ioctl(struct file *f, unsigned int ioctl,
 	struct vhost_demo *d = f->private_data;
 	void __user *argp = (void __user *)arg;
 	u64 __user *featurep = argp;
-	struct vhost_vring_file backend;
+	// struct vhost_vring_file backend;
 	u64 features;
 	int r;
+
+	printk("vhost_demo_ioctl() begin\n");
 
 	switch (ioctl) {
 	// case VHOST_NET_SET_BACKEND:
@@ -453,28 +447,26 @@ static long vhost_demo_ioctl(struct file *f, unsigned int ioctl,
 	// 		return -EFAULT;
 	// 	return vhost_net_set_backend(n, backend.index, backend.fd);
 	case VHOST_GET_FEATURES:
-		// features = VHOST_NET_FEATURES;
-		// if (copy_to_user(featurep, &features, sizeof features))
-		// 	return -EFAULT;
+		features = VHOST_FEATURES |
+				(1ULL << VIRTIO_F_ACCESS_PLATFORM);
+		if (copy_to_user(featurep, &features, sizeof features))
+			return -EFAULT;
 		return 0;
 	case VHOST_SET_FEATURES:
-		// if (copy_from_user(&features, featurep, sizeof features))
-		// 	return -EFAULT;
-		// if (features & ~VHOST_NET_FEATURES)
-		// 	return -EOPNOTSUPP;
-		// return vhost_net_set_features(n, features);
-		return 0;
+		if (copy_from_user(&features, featurep, sizeof features))
+			return -EFAULT;
+		return vhost_demo_set_features(d, features);
 	case VHOST_GET_BACKEND_FEATURES:
-		// features = VHOST_NET_BACKEND_FEATURES;
-		// if (copy_to_user(featurep, &features, sizeof(features)))
-		// 	return -EFAULT;
+		features = (1ULL << VHOST_BACKEND_F_IOTLB_MSG_V2);
+		if (copy_to_user(featurep, &features, sizeof(features)))
+			return -EFAULT;
 		return 0;
 	case VHOST_SET_BACKEND_FEATURES:
-		// if (copy_from_user(&features, featurep, sizeof(features)))
-		// 	return -EFAULT;
-		// if (features & ~VHOST_NET_BACKEND_FEATURES)
-		// 	return -EOPNOTSUPP;
-		// vhost_set_backend_features(&n->dev, features);
+		if (copy_from_user(&features, featurep, sizeof(features)))
+			return -EFAULT;
+		if (features & ~(1ULL << VHOST_BACKEND_F_IOTLB_MSG_V2))
+			return -EOPNOTSUPP;
+		vhost_set_backend_features(&d->dev, features);
 		return 0;
 	case VHOST_RESET_OWNER:
 		return vhost_demo_reset_owner(d);
@@ -485,47 +477,47 @@ static long vhost_demo_ioctl(struct file *f, unsigned int ioctl,
 		r = vhost_dev_ioctl(&d->dev, ioctl, argp);
 		if (r == -ENOIOCTLCMD)
 			r = vhost_vring_ioctl(&d->dev, ioctl, argp);
-		// else
-		// 	vhost_net_flush(n);
+		else
+			vhost_demo_flush(d);
 		mutex_unlock(&d->dev.mutex);
 		return r;
 	}
 }
 
-static ssize_t vhost_demo_chr_read_iter(struct kiocb *iocb, struct iov_iter *to)
-{
-	struct file *file = iocb->ki_filp;
-	struct vhost_demo *d = file->private_data;
-	struct vhost_dev *dev = &d->dev;
-	int noblock = file->f_flags & O_NONBLOCK;
+// static ssize_t vhost_demo_chr_read_iter(struct kiocb *iocb, struct iov_iter *to)
+// {
+// 	struct file *file = iocb->ki_filp;
+// 	struct vhost_demo *d = file->private_data;
+// 	struct vhost_dev *dev = &d->dev;
+// 	int noblock = file->f_flags & O_NONBLOCK;
 
-	return vhost_chr_read_iter(dev, to, noblock);
-}
+// 	return vhost_chr_read_iter(dev, to, noblock);
+// }
 
-static ssize_t vhost_demo_chr_write_iter(struct kiocb *iocb,
-					struct iov_iter *from)
-{
-	struct file *file = iocb->ki_filp;
-	struct vhost_demo *d = file->private_data;
-	struct vhost_dev *dev = &d->dev;
+// static ssize_t vhost_demo_chr_write_iter(struct kiocb *iocb,
+// 					struct iov_iter *from)
+// {
+// 	struct file *file = iocb->ki_filp;
+// 	struct vhost_demo *d = file->private_data;
+// 	struct vhost_dev *dev = &d->dev;
 
-	return vhost_chr_write_iter(dev, from);
-}
+// 	return vhost_chr_write_iter(dev, from);
+// }
 
-static __poll_t vhost_demo_chr_poll(struct file *file, poll_table *wait)
-{
-	struct vhost_demo *d = file->private_data;
-	struct vhost_dev *dev = &d->dev;
+// static __poll_t vhost_demo_chr_poll(struct file *file, poll_table *wait)
+// {
+// 	struct vhost_demo *d = file->private_data;
+// 	struct vhost_dev *dev = &d->dev;
 
-	return vhost_chr_poll(file, dev, wait);
-}
+// 	return vhost_chr_poll(file, dev, wait);
+// }
 
 static const struct file_operations vhost_demo_fops = {
 	.owner          = THIS_MODULE,
 	.release        = vhost_demo_release,
-	.read_iter      = vhost_demo_chr_read_iter,
-	.write_iter     = vhost_demo_chr_write_iter,
-	.poll           = vhost_demo_chr_poll,
+	// .read_iter      = vhost_demo_chr_read_iter,
+	// .write_iter     = vhost_demo_chr_write_iter,
+	// .poll           = vhost_demo_chr_poll,
 	.unlocked_ioctl = vhost_demo_ioctl,
 	.compat_ioctl   = compat_ptr_ioctl,
 	.open           = vhost_demo_open,
