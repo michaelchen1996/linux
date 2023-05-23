@@ -719,6 +719,8 @@ static void nested_cache_shadow_vmcs12(struct kvm_vcpu *vcpu,
 
 	memcpy(shadow, map.hva, VMCS12_SIZE);
 	kvm_vcpu_unmap(vcpu, &map, false);
+
+	printk("[cpt6-exp2]nested_cache_shadow_vmcs12, host_rip=%x\n",shadow->host_rip);
 }
 
 static void nested_flush_cached_shadow_vmcs12(struct kvm_vcpu *vcpu,
@@ -732,6 +734,8 @@ static void nested_flush_cached_shadow_vmcs12(struct kvm_vcpu *vcpu,
 
 	kvm_write_guest(vmx->vcpu.kvm, vmcs12->vmcs_link_pointer,
 			get_shadow_vmcs12(vcpu), VMCS12_SIZE);
+			
+	printk("[cpt6-exp2]nested_flush_cached_shadow_vmcs12, host_rip=%x\n",get_shadow_vmcs12(vcpu)->host_rip);
 }
 
 /*
