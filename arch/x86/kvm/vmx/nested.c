@@ -3862,8 +3862,6 @@ static int vmx_check_nested_events(struct kvm_vcpu *vcpu)
 	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	/*		
-		// [cpt6-exp2] before L1 run
-		record_vmcs12_data = vmcs12->guest_cr0;
 	 * Clear the MTF state. If a higher priority VM-exit is delivered first,
 	 * this state is discarded.
 	 */
