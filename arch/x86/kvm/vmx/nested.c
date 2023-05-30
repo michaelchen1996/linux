@@ -16,6 +16,9 @@
 #include "vmx.h"
 #include "x86.h"
 
+// [cpt6-exp2]
+u64 record_vmcs12_data = 0;
+
 static bool __read_mostly enable_shadow_vmcs = 1;
 module_param_named(enable_shadow_vmcs, enable_shadow_vmcs, bool, S_IRUGO);
 
@@ -719,8 +722,6 @@ static void nested_cache_shadow_vmcs12(struct kvm_vcpu *vcpu,
 
 	memcpy(shadow, map.hva, VMCS12_SIZE);
 	kvm_vcpu_unmap(vcpu, &map, false);
-
-	printk("[cpt6-exp2]nested_cache_shadow_vmcs12, host_rip=%x\n",shadow->host_rip);
 }
 
 static void nested_flush_cached_shadow_vmcs12(struct kvm_vcpu *vcpu,
@@ -734,8 +735,6 @@ static void nested_flush_cached_shadow_vmcs12(struct kvm_vcpu *vcpu,
 
 	kvm_write_guest(vmx->vcpu.kvm, vmcs12->vmcs_link_pointer,
 			get_shadow_vmcs12(vcpu), VMCS12_SIZE);
-			
-	printk("[cpt6-exp2]nested_flush_cached_shadow_vmcs12, host_rip=%x\n",get_shadow_vmcs12(vcpu)->host_rip);
 }
 
 /*
@@ -3610,6 +3609,14 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 	 */
 	nested_cache_shadow_vmcs12(vcpu, vmcs12);
 
+	// [cpt6-exp2] after  L1 run
+	if (record_vmcs12_data != vmcs12->guest_cr0)
+	{
+		printk("[cpt6-exp2] before L1 run, guest_cr0=%llx\n",record_vmcs12_data);
+		printk("[cpt6-exp2] after  L1 run, guest_cr0=%llx\n",vmcs12->guest_cr0);
+		//record_vmcs12_data = vmcs12->guest_cr0;
+	}
+
 	switch (vmcs12->guest_activity_state) {
 	case GUEST_ACTIVITY_HLT:
 		/*
@@ -3854,7 +3861,9 @@ static int vmx_check_nested_events(struct kvm_vcpu *vcpu)
 	bool mtf_pending = vmx->nested.mtf_pending;
 	struct kvm_lapic *apic = vcpu->arch.apic;
 
-	/*
+	/*		
+		// [cpt6-exp2] before L1 run
+		record_vmcs12_data = vmcs12->guest_cr0;
 	 * Clear the MTF state. If a higher priority VM-exit is delivered first,
 	 * this state is discarded.
 	 */
@@ -4559,6 +4568,10 @@ void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 vm_exit_reason,
 		 * immutable.
 		 */
 		nested_flush_cached_shadow_vmcs12(vcpu, vmcs12);
+				
+		// [cpt6-exp2] before L1 run
+		record_vmcs12_data = vmcs12->guest_cr0;
+		
 	} else {
 		/*
 		 * The only expected VM-instruction error is "VM entry with
